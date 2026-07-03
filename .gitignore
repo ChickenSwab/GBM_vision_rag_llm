@@ -1,0 +1,12 @@
+models
+comp2/cgga.index
+comp2/CGGA.mRNAseq_325_clinical.20200506.txt
+comp2/CGGA.mRNAseq_693_clinical.20200506.txt
+comp2/documents.pkl
+comp2/embeddings.npy
+comp2/metadata.pkl
+comp2/vision_rag_output.json
+myenv
+comp3/__pycache__
+comp2/__pycache__
+comp1/__pycache__
