@@ -377,10 +377,7 @@ def extract_all_features(seg_mask, mri_tensor=None, affine=None, voxel_volume_cc
  
     return features, query
 
-# %%
-# ============================================================
-# RUN INFERENCE ON AN UPLOADED MRI
-# ============================================================
+# run inference on an uploaded mri
 
 def run_uploaded_case(
     flair_path,
@@ -408,9 +405,6 @@ def run_uploaded_case(
         query
     """
 
-    # --------------------------------------------------------
-    # CREATE INPUT DICTIONARY
-    # --------------------------------------------------------
 
     patient = {
 
@@ -423,10 +417,6 @@ def run_uploaded_case(
         "t2": t2_path
 
     }
-
-    # --------------------------------------------------------
-    # APPLY TRANSFORMS
-    # --------------------------------------------------------
 
     dataset = Dataset(
         data=[patient],
@@ -442,10 +432,7 @@ def run_uploaded_case(
         .float()
     )
 
-    # --------------------------------------------------------
-    # RUN SWIN UNETR
-    # --------------------------------------------------------
-
+    # RUN SWIN UNETR    
     model.eval()
 
     with torch.no_grad():
@@ -466,10 +453,8 @@ def run_uploaded_case(
 
         )
 
-    # --------------------------------------------------------
-    # SEGMENTATION MASK
-    # --------------------------------------------------------
 
+    # SEGMENTATION MASK
     seg_mask = (
         torch.argmax(
             prediction,
@@ -480,10 +465,6 @@ def run_uploaded_case(
         .numpy()
     )
 
-    # --------------------------------------------------------
-    # MRI NUMPY ARRAY
-    # --------------------------------------------------------
-
     mri_numpy = (
         image
         .squeeze(0)
@@ -491,9 +472,6 @@ def run_uploaded_case(
         .numpy()
     )
 
-    # --------------------------------------------------------
-    # AFFINE MATRIX
-    # --------------------------------------------------------
 
     affine = None
 
@@ -504,10 +482,7 @@ def run_uploaded_case(
     except Exception:
         affine = None
 
-    # --------------------------------------------------------
     # FEATURE EXTRACTION
-    # --------------------------------------------------------
-
     features, query = extract_all_features(
 
         seg_mask,
@@ -518,10 +493,7 @@ def run_uploaded_case(
 
     )
 
-    # --------------------------------------------------------
     # RETURN EVERYTHING
-    # --------------------------------------------------------
-
     return {
 
         "segmentation": seg_mask,
