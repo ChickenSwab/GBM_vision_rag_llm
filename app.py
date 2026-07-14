@@ -22,12 +22,27 @@ MODEL_PATH = os.path.join(
     "models",
     "best_model.pth"
 )
+def get_vision_model():
 
-print("Loading Swin UNETR...")
+    global vision_model
 
-vision_model = load_model(MODEL_PATH)
+    if vision_model is None:
 
-print("Vision model loaded.\n")
+        print("Loading Swin UNETR...")
+
+        vision_model = load_model(
+            MODEL_PATH
+        )
+
+        print("Vision model loaded.\n")
+
+    return vision_model
+vision_model = None
+# print("Loading Swin UNETR...")
+
+# vision_model = load_model(MODEL_PATH)
+
+# print("Vision model loaded.\n")
 
 
 # UNLOAD VISION MODEL
@@ -71,14 +86,19 @@ def analyze_patient(
 
         t2_path=t2_path,
 
-        model=vision_model
+        model=get_vision_model()
 
     )
 
     print("Vision analysis completed.\n")
 
+    # print(
+    #     f"Segmentation overlay saved to:\n"
+    #     f"{vision_result['overlay']}\n"
+    # )
+
     # FREE SWIN MODEL
-    unload_vision_model()
+    # unload_vision_model()
 
     print("===================================")
     print("STEP 2 : Running RAG Retrieval")
@@ -111,7 +131,19 @@ def analyze_patient(
     # FREE QWEN
     unload_qwen()
 
-    return report
+    return {
+
+        "report": report,
+
+        "raw_image": vision_result["raw_image"],
+
+        "overlay": vision_result["overlay"],
+
+        "features": vision_result["features"],
+
+        "rag": rag_result
+
+    }
 
 
 # MAIN
@@ -155,5 +187,9 @@ if __name__ == "__main__":
     print("=" * 80)
     print("FINAL REPORT")
     print("=" * 80)
-    print(report)
+    print(report["report"])
     print("=" * 80)
+
+import atexit
+
+atexit.register(unload_vision_model)

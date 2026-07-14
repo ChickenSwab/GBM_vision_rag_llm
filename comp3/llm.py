@@ -74,9 +74,15 @@ Never predict prognosis.
 
 Never invent anatomy.
 
+Do not infer disease severity beyond the supplied evidence.
+
 If information is unavailable, explicitly state:
 
 "Not available from the current evidence."
+
+The retrieved cohort represents similar historical patients only.
+
+The retrieved cohort does NOT represent the uploaded patient's molecular profile, prognosis, or treatment response.
 
 ==================================================
 IMPORTANT TERMINOLOGY
@@ -147,7 +153,13 @@ TOP RETRIEVED PATIENTS
 ==================================================
 
 {json.dumps(rag_result["retrieved_patients"], indent=2)}
+The Top Match and Top Retrieved Patients are provided for context only.
 
+Do NOT mention patient IDs.
+
+Do NOT describe individual retrieved patients.
+
+Use them ONLY to summarize the retrieved cohort statistics.
 ==================================================
 
 Generate EXACTLY the following report.
@@ -201,9 +213,9 @@ Summarize ONLY the retrieved CGGA cohort.
 
 Include:
 
-• Number of retrieved patients
+• Retrieved cohort size
 
-• Average semantic similarity score (if available)
+• Average semantic similarity score
 
 • Dominant IDH status
 
@@ -211,19 +223,37 @@ Include:
 
 • Average overall survival
 
-State clearly that these findings describe ONLY the retrieved cohort and must not be interpreted as the molecular profile or prognosis of the current patient.
+State clearly that these findings summarize the retrieved cohort only.
+
+Do NOT imply they represent the uploaded patient.
+
+Do NOT mention individual patient IDs.
 
 --------------------------------------------------
 
 ## 4. Molecular Evidence
 
-Report the molecular characteristics exactly as provided in the retrieved cohort.
+Report ONLY the molecular characteristics of the retrieved cohort.
 
-Do not translate or reinterpret terms such as "Wildtype".
+Include:
 
-Do not state that the patient has or does not have a mutation.
+• Dominant IDH status
 
-Always refer to the retrieved cohort.
+• Dominant MGMT status
+
+• IDH distribution (if available)
+
+• MGMT distribution (if available)
+
+Always introduce this section using wording similar to:
+
+"The retrieved cohort demonstrated the following molecular characteristics."
+
+Never state or imply that the uploaded patient has these molecular characteristics.
+
+Never predict mutation status.
+
+Never reinterpret molecular terminology.
 
 --------------------------------------------------
 
@@ -241,9 +271,9 @@ Never recommend treatment.
 
 ## 6. Prognostic Discussion
 
-Do NOT predict this patient's prognosis.
+Do NOT predict the prognosis of the uploaded patient.
 
-Instead summarize the retrieved cohort survival.
+Instead summarize ONLY the retrieved cohort survival statistics.
 
 Example:
 
@@ -251,8 +281,7 @@ Example:
 
 Then add:
 
-"This information should not be interpreted as an individual patient prognosis."
-
+"This information summarizes similar retrieved cases and should not be interpreted as an individual patient prognosis."
 --------------------------------------------------
 
 ## 7. Confidence Statement
@@ -261,19 +290,19 @@ This report was generated using:
 
 • Swin UNETR MRI segmentation
 
-• Radiomic feature extraction
+• Quantitative radiomic feature extraction
 
 • Retrieval-Augmented Generation (RAG) using the CGGA dataset
 
-The report summarizes imaging-derived evidence and retrieved cohort information. It is intended to support research and should be interpreted alongside expert clinical evaluation.
+The report summarizes imaging-derived measurements together with retrieved cohort evidence.
 
-This report is intended for research support and should not replace clinical judgement.
+The molecular findings describe the retrieved cohort only.
 
-Do not add extra sections.
+The retrieved cohort should not be interpreted as the molecular profile, prognosis, or treatment response of the uploaded patient.
 
-Do not include markdown tables.
+This report is intended for research support and should be interpreted alongside expert clinical evaluation.
 
-Do not include bullet points outside the requested sections.
+This report should not replace clinical judgement.
 """
 
     return prompt
@@ -374,5 +403,4 @@ def unload_qwen():
         torch.cuda.empty_cache()
 
     print("Qwen unloaded.")
-
 

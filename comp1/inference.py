@@ -2,7 +2,12 @@
 # ============================================================
 # COMPONENT 1 - SWIN UNETR INFERENCE
 # ============================================================
-
+import matplotlib.pyplot as plt
+import matplotlib.patches as mpatches
+import nibabel as nib
+import os
+import numpy as np
+from skimage.transform import resize
 import os
 import numpy as np
 import torch
@@ -377,6 +382,188 @@ def extract_all_features(seg_mask, mri_tensor=None, affine=None, voxel_volume_cc
  
     return features, query
 
+#visualization
+def plot_segmentation_overlay(
+    mri_numpy,
+    seg_mask,
+    case_id,
+    raw_flair_path=None,
+):
+    """
+    Saves an overlay of the predicted segmentation.
+
+    Returns
+    -------
+    str
+        Path to saved PNG.
+    """
+
+    if raw_flair_path is not None and os.path.exists(raw_flair_path):
+        raw = nib.load(raw_flair_path).get_fdata()
+
+        if raw.shape == seg_mask.shape:
+            flair = raw
+        else:
+            flair = mri_numpy[0]
+    else:
+        flair = mri_numpy[0]
+
+    p1, p99 = np.percentile(flair[flair > 0], [1, 99])
+
+    flair = np.clip(flair, p1, p99)
+    flair = (flair - p1) / (p99 - p1 + 1e-8)
+
+    tumour = (seg_mask > 0).astype(int)
+
+    # -------------------------------------------------
+    # SAVE RAW MRI
+    # -------------------------------------------------
+
+    fig_raw, axes_raw = plt.subplots(1, 3, figsize=(16,5))
+    fig_raw.suptitle(f"{case_id} - Raw MRI", fontsize=13)
+
+    names = [
+        "Axial",
+        "Coronal",
+        "Sagittal"
+    ]
+
+    for ax, axis, title in zip(axes_raw, [0,1,2], names):
+
+        if axis == 0:
+
+            counts = tumour.sum(axis=(1,2))
+            sl = np.argmax(counts)
+
+            fl = flair[sl,:,:]
+
+        elif axis == 1:
+
+            counts = tumour.sum(axis=(0,2))
+            sl = np.argmax(counts)
+
+            fl = flair[:,sl,:]
+
+        else:
+
+            counts = tumour.sum(axis=(0,1))
+            sl = np.argmax(counts)
+
+            fl = flair[:,:,sl]
+
+        ax.imshow(
+            fl.T,
+            cmap="gray",
+            origin="lower"
+        )
+
+        ax.set_title(title)
+        ax.axis("off")
+
+    plt.tight_layout()
+
+    os.makedirs("outputs", exist_ok=True)
+
+    raw_path = os.path.join(
+        "outputs",
+        f"{case_id}_raw.png"
+    )
+
+    plt.savefig(
+        raw_path,
+        dpi=150
+    )
+
+    plt.close(fig_raw)
+
+    fig, axes = plt.subplots(1, 3, figsize=(16,5))
+    fig.suptitle(f"{case_id}", fontsize=13)
+
+    names = [
+        "Axial",
+        "Coronal",
+        "Sagittal"
+    ]
+
+    for ax, axis, title in zip(axes,[0,1,2],names):
+
+        if axis == 0:
+
+            counts = tumour.sum(axis=(1,2))
+            sl = np.argmax(counts)
+
+            fl = flair[sl,:,:]
+            mk = seg_mask[sl,:,:]
+
+        elif axis == 1:
+
+            counts = tumour.sum(axis=(0,2))
+            sl = np.argmax(counts)
+
+            fl = flair[:,sl,:]
+            mk = seg_mask[:,sl,:]
+
+        else:
+
+            counts = tumour.sum(axis=(0,1))
+            sl = np.argmax(counts)
+
+            fl = flair[:,:,sl]
+            mk = seg_mask[:,:,sl]
+
+        if mk.shape != fl.shape:
+
+            mk = resize(
+                mk,
+                fl.shape,
+                order=0,
+                preserve_range=True,
+                anti_aliasing=False
+            ).astype(np.int32)
+
+        overlay = np.zeros((*fl.shape,4))
+
+        overlay[mk==1] = [1,0,0,0.6]
+        overlay[mk==2] = [1,1,0,0.4]
+        overlay[mk==3] = [0,0.3,1,0.7]
+
+        ax.imshow(fl.T,cmap="gray",origin="lower")
+        ax.imshow(overlay.transpose(1,0,2),origin="lower")
+
+        ax.set_title(title)
+        ax.axis("off")
+
+    legend = [
+
+        mpatches.Patch(color="red",label="NCR"),
+
+        mpatches.Patch(color="yellow",label="Edema"),
+
+        mpatches.Patch(color="blue",label="Enhancing Tumor"),
+
+    ]
+
+    fig.legend(
+        handles=legend,
+        loc="lower center",
+        ncol=3
+    )
+
+    plt.tight_layout(rect=[0,0.05,1,1])
+
+    os.makedirs("outputs",exist_ok=True)
+
+    save_path = os.path.join(
+        "outputs",
+        f"{case_id}_overlay.png"
+    )
+
+    plt.savefig(save_path,dpi=150)
+
+    plt.close()
+
+    return raw_path, save_path
+
 # run inference on an uploaded mri
 
 def run_uploaded_case(
@@ -423,7 +610,11 @@ def run_uploaded_case(
         transform=upload_transforms
     )
 
+    print("1. Dataset created")
+
     sample = dataset[0]
+
+    print("2. Sample loaded")
 
     image = (
         sample["image"]
@@ -432,26 +623,32 @@ def run_uploaded_case(
         .float()
     )
 
-    # RUN SWIN UNETR    
+    print("3. Image shape:", image.shape)
+
+    if torch.cuda.is_available():
+        print(
+            f"Allocated: {torch.cuda.memory_allocated()/1024**2:.1f} MB"
+        )
+        print(
+            f"Reserved : {torch.cuda.memory_reserved()/1024**2:.1f} MB"
+        )
+
+    print("4. Starting inference...")
+
     model.eval()
 
     with torch.no_grad():
 
         prediction = sliding_window_inference(
-
             inputs=image,
-
-            roi_size=(96, 96, 96),
-
+            roi_size=(96, 96, 96),   # or 96 if you reverted it
             sw_batch_size=2,
-
             predictor=model,
-
             overlap=0.5,
-
             mode="gaussian"
-
         )
+
+    print("5. Inference finished")
 
 
     # SEGMENTATION MASK
@@ -493,8 +690,18 @@ def run_uploaded_case(
 
     )
 
+    raw_path, overlay_path = plot_segmentation_overlay(
+        mri_numpy=mri_numpy,
+        seg_mask=seg_mask,
+        case_id="Uploaded_Case",
+        raw_flair_path=flair_path,
+    )
     # RETURN EVERYTHING
     return {
+
+        "raw_image": raw_path,
+
+        "overlay": overlay_path,
 
         "segmentation": seg_mask,
 
