@@ -219,167 +219,501 @@ upload_transforms = Compose(
 # %%
 from scipy import ndimage
  
-def extract_all_features(seg_mask, mri_tensor=None, affine=None, voxel_volume_cc=0.001):
+def extract_all_features(
+    seg_mask,
+    mri_tensor=None,
+    affine=None
+):
     """
-    seg_mask   : (H, W, D) numpy array, labels 0/1/2/3
-    mri_tensor : (4, H, W, D) numpy array — FLAIR, T1, T1CE, T2
-    returns    : (features dict, clinical query string)
+    Extract vision metrics from the predicted BraTS segmentation.
+
+    Parameters
+    ----------
+    seg_mask : numpy.ndarray
+        3D segmentation mask with BraTS labels:
+        0 = background
+        1 = NCR
+        2 = edema
+        3 = enhancing tumor
+
+    mri_tensor : numpy.ndarray, optional
+        Shape: (4, H, W, D)
+        Channels:
+        0 = FLAIR
+        1 = T1
+        2 = T1CE
+        3 = T2
+
+    affine : numpy.ndarray, optional
+        NIfTI affine matrix used to calculate physical voxel volume.
+
+    Returns
+    -------
+    features : dict
+        Extracted vision metrics.
+
+    query : str
+        Natural-language query for the RAG component.
     """
+
     features = {}
- 
-    # BraTS label definitions
-    # 1 = NCR (necrotic core)
-    # 2 = ED  (edema)
-    # 3 = ET  (enhancing tumor)
+
+    # ============================================================
+    # VOXEL VOLUME
+    # ============================================================
+
+    # Calculate physical voxel volume from the affine.
+    # NIfTI affine is generally expressed in mm.
+    # 1 cc = 1000 mm^3.
+
+    if affine is not None:
+
+        try:
+            voxel_volume_mm3 = abs(
+                np.linalg.det(
+                    np.asarray(affine)[:3, :3]
+                )
+            )
+
+            voxel_volume_cc = voxel_volume_mm3 / 1000.0
+
+        except Exception:
+
+            voxel_volume_cc = 0.001
+
+    else:
+
+        # Fallback for cases where affine is unavailable
+        voxel_volume_cc = 0.001
+
+    # ============================================================
+    # BRATS LABEL DEFINITIONS
+    # ============================================================
+
+    # BraTS:
+    # 1 = NCR / necrotic and non-enhancing tumor core
+    # 2 = ED / edema
+    # 3 = ET / enhancing tumor
+    #
     # TC = NCR + ET
     # WT = NCR + ED + ET
- 
+
     ncr_vox = int(np.sum(seg_mask == 1))
-    ed_vox  = int(np.sum(seg_mask == 2))
-    et_vox  = int(np.sum(seg_mask == 3))
-    tc_vox  = ncr_vox + et_vox
-    wt_vox  = ncr_vox + ed_vox + et_vox
- 
-    tc_vol  = tc_vox  * voxel_volume_cc
-    wt_vol  = wt_vox  * voxel_volume_cc
-    et_vol  = et_vox  * voxel_volume_cc
-    ed_vol  = ed_vox  * voxel_volume_cc
+    ed_vox = int(np.sum(seg_mask == 2))
+    et_vox = int(np.sum(seg_mask == 3))
+
+    tc_vox = ncr_vox + et_vox
+    wt_vox = ncr_vox + ed_vox + et_vox
+
+    # ============================================================
+    # PHYSICAL VOLUMES
+    # ============================================================
+
+    tc_vol = tc_vox * voxel_volume_cc
+    wt_vol = wt_vox * voxel_volume_cc
+    et_vol = et_vox * voxel_volume_cc
+    ed_vol = ed_vox * voxel_volume_cc
     ncr_vol = ncr_vox * voxel_volume_cc
- 
-    features["wt_volume_cc"]  = round(wt_vol,  2)
-    features["tc_volume_cc"]  = round(tc_vol,  2)
-    features["et_volume_cc"]  = round(et_vol,  2)
+
+    features["wt_volume_cc"] = round(wt_vol, 2)
+    features["tc_volume_cc"] = round(tc_vol, 2)
+    features["et_volume_cc"] = round(et_vol, 2)
     features["ncr_volume_cc"] = round(ncr_vol, 2)
-    features["ed_volume_cc"]  = round(ed_vol,  2)
-    features["et_tc_ratio"]   = round(et_vol  / tc_vol,  3) if tc_vol  > 0 else 0
-    features["ncr_tc_ratio"]  = round(ncr_vol / tc_vol,  3) if tc_vol  > 0 else 0
-    features["ed_wt_ratio"]   = round(ed_vol  / wt_vol,  3) if wt_vol  > 0 else 0
- 
-    # spatial location — RAS space: low W = right, high W = left
-    # spatial location using RAS world coordinates
+    features["ed_volume_cc"] = round(ed_vol, 2)
+
+    # ============================================================
+    # VOLUME RATIOS
+    # ============================================================
+
+    features["et_tc_ratio"] = (
+        round(et_vol / tc_vol, 3)
+        if tc_vol > 0
+        else 0
+    )
+
+    features["ncr_tc_ratio"] = (
+        round(ncr_vol / tc_vol, 3)
+        if tc_vol > 0
+        else 0
+    )
+
+    features["ed_wt_ratio"] = (
+        round(ed_vol / wt_vol, 3)
+        if wt_vol > 0
+        else 0
+    )
+
+    # ============================================================
+    # SPATIAL LOCATION
+    # ============================================================
+
     if wt_vox > 0:
 
         coords = np.argwhere(seg_mask > 0)
+
         centroid = coords.mean(axis=0)
 
         H, W, D = seg_mask.shape
 
         if affine is not None:
 
-        # convert voxel centroid -> world RAS
-            centroid_h = np.append(centroid, 1)
-            world_centroid = affine @ centroid_h
+            try:
 
-            x, y, z = world_centroid[:3]
+                # Convert voxel centroid to world coordinates
+                centroid_h = np.append(centroid, 1)
 
-        # RAS:
-        # x < 0 = right hemisphere
-        # x > 0 = left hemisphere
-            features["hemisphere"] = ("right" if x < 0 else "left")
+                world_centroid = (
+                    np.asarray(affine) @ centroid_h
+                )
 
-        # y axis: anterior/posterior
-            features["coronal_location"] = (
-                "frontal" if y > 120 else
-                "parieto-temporal"
-            )
+                x, y, z = world_centroid[:3]
 
-        # z axis: inferior/superior
-            features["axial_location"] = (
-                "inferior" if z < 80 else
-                "middle" if z < 160 else
-                "superior"
-            )
+                # ------------------------------------------------
+                # RAS coordinates
+                # x < 0 = right
+                # x > 0 = left
+                # ------------------------------------------------
+
+                features["hemisphere"] = (
+                    "right"
+                    if x < 0
+                    else "left"
+                )
+
+                # ------------------------------------------------
+                # Coronal location
+                # ------------------------------------------------
+
+                features["coronal_location"] = (
+                    "frontal"
+                    if y > 120
+                    else "parieto-temporal"
+                )
+
+                # ------------------------------------------------
+                # Axial location
+                # ------------------------------------------------
+
+                features["axial_location"] = (
+                    "inferior"
+                    if z < 80
+                    else
+                    "middle"
+                    if z < 160
+                    else
+                    "superior"
+                )
+
+            except Exception:
+
+                # Fallback to voxel coordinates
+                features["hemisphere"] = (
+                    "right"
+                    if centroid[1] < W / 2
+                    else "left"
+                )
+
+                features["axial_location"] = (
+                    "inferior"
+                    if centroid[0] < H / 3
+                    else
+                    "middle"
+                    if centroid[0] < 2 * H / 3
+                    else
+                    "superior"
+                )
+
+                features["coronal_location"] = (
+                    "frontal"
+                    if centroid[2] < D / 3
+                    else
+                    "parieto-temporal"
+                    if centroid[2] < 2 * D / 3
+                    else
+                    "occipital"
+                )
 
         else:
 
-        # fallback if affine unavailable
+            # ----------------------------------------------------
+            # Fallback when affine is unavailable
+            # ----------------------------------------------------
+
             features["hemisphere"] = (
-                "right" if centroid[1] < W/2 else "left"
+                "right"
+                if centroid[1] < W / 2
+                else "left"
             )
 
             features["axial_location"] = (
-                "inferior" if centroid[0] < H/3 else
-                "middle" if centroid[0] < 2*H/3 else
+                "inferior"
+                if centroid[0] < H / 3
+                else
+                "middle"
+                if centroid[0] < 2 * H / 3
+                else
                 "superior"
             )
 
             features["coronal_location"] = (
-                "frontal" if centroid[2] < D/3 else
-                "parieto-temporal" if centroid[2] < 2*D/3 else
+                "frontal"
+                if centroid[2] < D / 3
+                else
+                "parieto-temporal"
+                if centroid[2] < 2 * D / 3
+                else
                 "occipital"
             )
-
 
     else:
 
         features["hemisphere"] = "unknown"
         features["axial_location"] = "unknown"
         features["coronal_location"] = "unknown"
-    
- 
-    # shape features (Zwanenburg et al. 2020)
+
+    # ============================================================
+    # SHAPE FEATURES
+    # ============================================================
+
     if wt_vox > 0:
-        wt_mask  = (seg_mask > 0).astype(np.uint8)
-        bbox     = ndimage.find_objects(wt_mask)[0]
-        bh = bbox[0].stop - bbox[0].start
-        bw = bbox[1].stop - bbox[1].start
-        bd = bbox[2].stop - bbox[2].start
-        bbox_vol = bh * bw * bd * voxel_volume_cc
- 
-        features["solidity"]   = round(wt_vol / bbox_vol, 3) if bbox_vol > 0 else 0
-        dims = sorted([bh, bw, bd])
-        features["elongation"] = round(dims[2] / dims[0], 3) if dims[0] > 0 else 0
- 
-        grad     = np.gradient(wt_mask.astype(float))
-        surf_vox = np.sum(np.sqrt(sum(g**2 for g in grad)) > 0.5)
-        features["sphericity"] = round(
-            (np.pi**(1/3) * (6 * wt_vox)**(2/3)) / surf_vox, 3
-        ) if surf_vox > 0 else 0
- 
-    # intensity features
+
+        wt_mask = (
+            seg_mask > 0
+        ).astype(np.uint8)
+
+        objects = ndimage.find_objects(wt_mask)
+
+        if objects:
+
+            bbox = objects[0]
+
+            bh = bbox[0].stop - bbox[0].start
+            bw = bbox[1].stop - bbox[1].start
+            bd = bbox[2].stop - bbox[2].start
+
+            # Physical bounding-box volume
+            bbox_vol = (
+                bh
+                * bw
+                * bd
+                * voxel_volume_cc
+            )
+
+            features["solidity"] = (
+                round(wt_vol / bbox_vol, 3)
+                if bbox_vol > 0
+                else 0
+            )
+
+            # Elongation
+            dims = sorted(
+                [bh, bw, bd]
+            )
+
+            features["elongation"] = (
+                round(
+                    dims[2] / dims[0],
+                    3
+                )
+                if dims[0] > 0
+                else 0
+            )
+
+            # Sphericity
+            grad = np.gradient(
+                wt_mask.astype(float)
+            )
+
+            surf_vox = np.sum(
+                np.sqrt(
+                    sum(
+                        g ** 2
+                        for g in grad
+                    )
+                ) > 0.5
+            )
+
+            features["sphericity"] = (
+                round(
+                    (
+                        np.pi ** (1 / 3)
+                        * (6 * wt_vox) ** (2 / 3)
+                    )
+                    / surf_vox,
+                    3
+                )
+                if surf_vox > 0
+                else 0
+            )
+
+        else:
+
+            features["solidity"] = 0
+            features["elongation"] = 0
+            features["sphericity"] = 0
+
+    else:
+
+        features["solidity"] = 0
+        features["elongation"] = 0
+        features["sphericity"] = 0
+
+    # ============================================================
+    # INTENSITY FEATURES
+    # ============================================================
+
     if mri_tensor is not None:
-        tc_mask = (seg_mask == 1) | (seg_mask == 3)
- 
-        for i, name in enumerate(["FLAIR", "T1", "T1CE", "T2"]):
+
+        tc_mask = (
+            (seg_mask == 1)
+            | (seg_mask == 3)
+        )
+
+        modality_names = [
+            "FLAIR",
+            "T1",
+            "T1CE",
+            "T2"
+        ]
+
+        regions = [
+            ("wt", seg_mask > 0),
+            ("tc", tc_mask),
+            ("et", seg_mask == 3)
+        ]
+
+        for i, name in enumerate(
+            modality_names
+        ):
+
             vol = mri_tensor[i]
-            for region, cond in [
-                ("wt", seg_mask > 0),
-                ("tc", tc_mask),
-                ("et", seg_mask == 3),
-            ]:
+
+            for region, cond in regions:
+
                 if np.sum(cond) < 10:
                     continue
+
                 vox = vol[cond]
-                features[f"{name}_{region}_mean"] = round(float(np.mean(vox)), 4)
-                features[f"{name}_{region}_std"]  = round(float(np.std(vox)),  4)
- 
-        # enhancement ratio (Ellingson et al. 2017)
-        normal_mask = seg_mask == 0
-        et_mask     = seg_mask == 3
-        if np.sum(normal_mask) > 100 and np.sum(et_mask) > 10:
-            mean_normal = float(np.mean(np.clip(mri_tensor[2][normal_mask], 0, None)))
-            mean_et     = float(np.mean(np.clip(mri_tensor[2][et_mask],     0, None)))
-            features["enhancement_ratio"] = round(
-                mean_et / mean_normal if mean_normal > 0.01 else 0, 3
+
+                features[
+                    f"{name}_{region}_mean"
+                ] = round(
+                    float(np.mean(vox)),
+                    4
+                )
+
+                features[
+                    f"{name}_{region}_std"
+                ] = round(
+                    float(np.std(vox)),
+                    4
+                )
+
+        # ========================================================
+        # ENHANCEMENT RATIO
+        # ========================================================
+
+        normal_mask = (
+            seg_mask == 0
+        )
+
+        et_mask = (
+            seg_mask == 3
+        )
+
+        if (
+            np.sum(normal_mask) > 100
+            and np.sum(et_mask) > 10
+        ):
+
+            normal_t1ce = np.clip(
+                mri_tensor[2][normal_mask],
+                0,
+                None
             )
- 
+
+            et_t1ce = np.clip(
+                mri_tensor[2][et_mask],
+                0,
+                None
+            )
+
+            mean_normal = float(
+                np.mean(normal_t1ce)
+            )
+
+            mean_et = float(
+                np.mean(et_t1ce)
+            )
+
+            features["enhancement_ratio"] = round(
+                (
+                    mean_et / mean_normal
+                    if mean_normal > 0.01
+                    else 0
+                ),
+                3
+            )
+
+        else:
+
+            features["enhancement_ratio"] = 0
+
+    else:
+
+        features["enhancement_ratio"] = 0
+
+    # ============================================================
+    # RAG QUERY
+    # ============================================================
+
     query = (
-        f"Glioma in {features['hemisphere']} hemisphere, "
-        f"{features['coronal_location']} {features['axial_location']} region. "
-        f"Whole tumor {features['wt_volume_cc']}cc, "
-        f"tumor core {features['tc_volume_cc']}cc "
-        f"(NCR {features['ncr_volume_cc']}cc + ET {features['et_volume_cc']}cc), "
-        f"edema {features['ed_volume_cc']}cc. "
-        f"ET/TC ratio {features['et_tc_ratio']}, "
-        f"NCR/TC ratio {features['ncr_tc_ratio']}, "
-        f"edema/WT ratio {features['ed_wt_ratio']}, "
-        f"solidity {features.get('solidity', 'N/A')}, "
-        f"sphericity {features.get('sphericity', 'N/A')}. "
-        f"Enhancement ratio {features.get('enhancement_ratio', 'N/A')}. "
-        f"What is the WHO grade, IDH status, MGMT methylation, "
-        f"treatment protocol and prognosis?"
+        f"Glioma in "
+        f"{features['hemisphere']} hemisphere, "
+        f"{features['coronal_location']} "
+        f"{features['axial_location']} region. "
+
+        f"Whole tumor "
+        f"{features['wt_volume_cc']}cc, "
+
+        f"tumor core "
+        f"{features['tc_volume_cc']}cc "
+
+        f"(NCR "
+        f"{features['ncr_volume_cc']}cc + "
+
+        f"ET "
+        f"{features['et_volume_cc']}cc), "
+
+        f"edema "
+        f"{features['ed_volume_cc']}cc. "
+
+        f"ET/TC ratio "
+        f"{features['et_tc_ratio']}, "
+
+        f"NCR/TC ratio "
+        f"{features['ncr_tc_ratio']}, "
+
+        f"edema/WT ratio "
+        f"{features['ed_wt_ratio']}, "
+
+        f"solidity "
+        f"{features.get('solidity', 'N/A')}, "
+
+        f"elongation "
+        f"{features.get('elongation', 'N/A')}, "
+
+        f"sphericity "
+        f"{features.get('sphericity', 'N/A')}. "
+
+        f"Enhancement ratio "
+        f"{features.get('enhancement_ratio', 'N/A')}. "
+
+        f"What is the WHO grade, IDH status, "
+        f"MGMT methylation, treatment protocol "
+        f"and prognosis?"
     )
- 
+
     return features, query
 
 #visualization

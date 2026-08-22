@@ -137,7 +137,7 @@ Average Overall Survival:
 {rag_result["cohort_summary"]["average_os_days"]} days
 
 Average Semantic Similarity:
-{rag_result["cohort_summary"]["average_similarity_percent"]}%
+{round(rag_result["cohort_summary"]["average_similarity"] * 100, 2)}%
 
 Retrieved Patients:
 {len(rag_result["retrieved_patients"])}
