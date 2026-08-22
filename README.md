@@ -4,3 +4,4 @@ requiremnts- https://www.cgga.org.cn/download.jsp <br>
            - mRNAseq_693<br>
            - mRNAseq_325<br>
 .PTH file from previously trained SWIN-Unetr model from https://github.com/reddydravya/BraTs_SWIN-Unetr
+(documentation needs updates ,its old)
